@@ -1,0 +1,35 @@
+{
+  "name": "copilot-ext",
+  "version": "1.0.0",
+  "description": "Copilot Money MCP Server",
+  "type": "module",
+  "main": "dist/server.js",
+  "scripts": {
+    "server": "tsx src/server.ts",
+    "preprocess": "tsx src/preprocessor/index.ts",
+    "db:migrate": "tsx src/shared/migrate.ts",
+    "build": "tsc",
+    "start": "node dist/server.js"
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "^1.0.0",
+    "@ai-sdk/openai": "^1.0.0",
+    "@modelcontextprotocol/sdk": "^1.10.1",
+    "ai": "^4.0.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.0",
+    "node-cron": "^3.0.3",
+    "pg": "^8.13.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.0.0",
+    "@types/node-cron": "^3.0.11",
+    "@types/pg": "^8.11.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.0"
+  }
+}

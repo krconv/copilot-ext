@@ -1,0 +1,6 @@
+.env
+.firebase-refresh-token
+node_modules/
+dist/
+*.har
+.mypy_cache/

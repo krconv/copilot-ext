@@ -1,0 +1,991 @@
+# ============================================================
+# Copilot Money – GraphQL Schema (reconstructed from HAR + Clairvoyance)
+# Updated 2026-02-24
+# Sources: HAR capture (994 GraphQL entries), Clairvoyance blind introspection
+# ============================================================
+
+scalar Date        # "YYYY-MM-DD" string
+scalar DateTime    # ISO-8601 string / epoch-ms integer
+scalar Float
+
+# ─── Enums ──────────────────────────────────────────────────
+
+enum TimeFrame {
+  ONE_WEEK
+  ONE_MONTH
+  THREE_MONTHS
+  SIX_MONTHS
+  ONE_YEAR
+  ALL_TIME
+}
+
+enum AccountType {
+  CREDIT
+  DEPOSITORY
+  INVESTMENT
+  LOAN
+  MORTGAGE
+  OTHER
+}
+
+enum TransactionType {
+  REGULAR
+  TRANSFER
+  INCOME
+}
+
+enum RecurringFrequency {
+  WEEKLY
+  BIWEEKLY
+  MONTHLY
+  BIMONTHLY
+  QUARTERLY
+  SEMIANNUALLY
+  ANNUALLY
+  IRREGULAR
+}
+
+enum RecurringState {
+  ACTIVE
+  PAUSED
+  DELETED
+}
+
+enum TagColorName {
+  RED1
+  RED2
+  ORANGE1
+  ORANGE2
+  YELLOW1
+  YELLOW2
+  GREEN1
+  GREEN2
+  TEAL1
+  TEAL2
+  BLUE1
+  BLUE2
+  PURPLE1
+  PURPLE2
+  PINK1
+  PINK2
+  BROWN1
+  GRAY1
+  GRAY2
+  OLIVE1
+  OLIVE2
+}
+
+enum SubscriptionState {
+  ACTIVE
+  CANCELLED
+  EXPIRED
+  TRIALING
+  PAUSED
+}
+
+enum SubscriptionPlanType {
+  STANDARD
+  PREMIUM
+}
+
+enum SubscriptionInterval {
+  MONTH
+  YEAR
+}
+
+enum SubscriptionPromotionType {
+  PERCENT_OFF
+  AMOUNT_OFF
+  TRIAL
+}
+
+enum InstitutionType {
+  DEPOSITORY
+  INVESTMENT
+  CREDIT
+  LOAN
+  OTHER
+}
+
+enum InstitutionDisplayType {
+  DEFAULT
+  CUSTOM
+}
+
+enum ProviderConnectionType {
+  PLAID
+  FINICITY
+  MX
+  MANUAL
+}
+
+enum SecurityType {
+  EQUITY
+  ETF
+  MUTUAL_FUND
+  FIXED_INCOME
+  CASH
+  DERIVATIVE
+  OTHER
+}
+
+enum AllocationType {
+  EQUITY
+  ETF
+  MUTUAL_FUND
+  FIXED_INCOME
+  CASH
+  HOME_EQUITY
+  OTHER
+}
+
+enum AggregatedHoldingsFilter {
+  LAST_PRICE
+  PRICE_CHANGE
+  TOTAL_RETURN
+  PERCENT_RETURN
+  MARKET_VALUE
+  DAILY_CHANGE
+}
+
+enum TopMoversFilter {
+  PRICE_CHANGE
+  PERCENT_CHANGE
+}
+
+enum AllocationFilter {
+  TYPE
+  ACCOUNT
+}
+
+enum RecurringKeyMetricsFrequency {
+  MONTHLY
+  YEARLY
+}
+
+enum TransactionSortField {
+  DATE
+  AMOUNT
+  NAME
+}
+
+enum SortDirection {
+  ASC
+  DESC
+}
+
+enum TermsStatus {
+  ACCEPTED
+  PENDING
+}
+
+# ─── Interfaces ─────────────────────────────────────────────
+
+interface Node {
+  id: ID!
+}
+
+# ─── Icon union ─────────────────────────────────────────────
+
+union Icon = EmojiUnicode | Genmoji
+
+type EmojiUnicode {
+  unicode: String!
+}
+
+type Genmoji {
+  id: ID!
+  src: String!
+}
+
+# ─── Logo union ─────────────────────────────────────────────
+
+union Logo = LogoBase64 | LogoUrl
+
+type LogoBase64 {
+  content: String!
+  contentType: String!
+}
+
+type LogoUrl {
+  src: String!
+}
+
+# ─── Payment method union ────────────────────────────────────
+
+union PaymentMethod = CardPaymentMethod | DepositoryAccountPaymentMethod | AppleAppStorePaymentMethod
+
+type CardPaymentMethod {
+  id: ID!
+  mask: String
+  brand: String
+}
+
+type DepositoryAccountPaymentMethod {
+  id: ID!
+  account: DepositoryAccountPaymentMethodAccount
+}
+
+type DepositoryAccountPaymentMethodAccount {
+  name: String!
+  mask: String
+  institutionId: String
+}
+
+type AppleAppStorePaymentMethod {
+  id: ID!
+}
+
+# ─── Subscription union ──────────────────────────────────────
+
+union Subscription = CopilotPaidSubscription | CopilotGiftSubscription
+
+type SubscriptionPlan {
+  id: ID!
+  type: SubscriptionPlanType!
+  amount: Int!
+  interval: SubscriptionInterval!
+}
+
+type SubscriptionPaymentFailure {
+  reason: String
+}
+
+type SubscriptionBilling {
+  nextPeriodAmount: Int
+  nextPeriodInterval: SubscriptionInterval
+  currentPeriodAmount: Int!
+  currentPeriodEndsAt: Float
+  currentPeriodInterval: SubscriptionInterval!
+  paymentFailure: SubscriptionPaymentFailure
+  paymentMethod: PaymentMethod
+}
+
+type SubscriptionPromotionDescription {
+  text: String!
+  emoji: Icon
+}
+
+type SubscriptionPromotion {
+  id: ID!
+  code: String
+  type: SubscriptionPromotionType!
+  value: Float
+  description: SubscriptionPromotionDescription
+}
+
+type ClaimedSubscriptionPromotion {
+  promotion: SubscriptionPromotion!
+  endsOn: Date
+}
+
+type CopilotPaidSubscription {
+  id: ID!
+  state: SubscriptionState!
+  plan: SubscriptionPlan!
+  billing: SubscriptionBilling
+  promotions: [ClaimedSubscriptionPromotion!]!
+}
+
+type CopilotGiftSubscription {
+  id: ID!
+  state: SubscriptionState!
+  currentPeriodEndsAt: Float
+  promotions: [ClaimedSubscriptionPromotion!]!
+}
+
+type OfferedSubscriptionPlan {
+  id: ID!
+  type: SubscriptionPlanType!
+  amount: Int!
+  interval: SubscriptionInterval!
+  trial: Trial
+}
+
+type Trial {
+  # Fields not yet enumerated
+  duration: Int
+}
+
+# ─── Account ─────────────────────────────────────────────────
+
+type Account {
+  id: ID!
+  name: String!
+  type: AccountType!
+  subType: String
+  mask: String
+  balance: Float!
+  limit: Float
+  color: String
+  institutionId: String
+  itemId: ID!
+  isManual: Boolean!
+  isUserHidden: Boolean!
+  isUserClosed: Boolean!
+  hasLiveBalance: Boolean!
+  hasHistoricalUpdates: Boolean!
+  latestBalanceUpdate: Float
+  liveBalance: Boolean!
+  accountLink: AccountLink
+}
+
+type AccountLink {
+  type: String!
+  account: Account
+}
+
+type AccountBalanceHistory {
+  balance: Float!
+  date: String!
+}
+
+type MonthlyTotal {
+  date: String!
+  totalAmount: Float!
+}
+
+# ─── Institution ─────────────────────────────────────────────
+
+type Institution {
+  id: ID!
+  name: String!
+  type: InstitutionType!
+  color: String
+  url: String
+  displayType: InstitutionDisplayType
+  logo: Logo
+  logoFull: Logo
+  providers: [ProviderInstitution!]!
+}
+
+type ProviderInstitution {
+  id: ID!
+  name: String!
+  connectionType: ProviderConnectionType!
+}
+
+type InstitutionEdge {
+  cursor: String!
+  node: Institution!
+}
+
+type InstitutionPagination {
+  edges: [InstitutionEdge!]!
+  pageInfo: PageInfo!
+}
+
+# ─── Connection (bank link) ───────────────────────────────────
+
+type Connection {
+  id: ID!
+  numAccounts: Int!
+  connectionStatus: String!   # e.g. "CONNECTED", "ERROR" — exact enum unknown
+  connectedSince: Float
+  connectionType: ProviderConnectionType!
+  loginRequired: Boolean!
+  newAccounts: Int
+  accounts: [Account!]!
+  institution: Institution!
+}
+
+# ─── Category ────────────────────────────────────────────────
+
+type Category {
+  id: ID!
+  name: String!
+  colorName: TagColorName!
+  isRolloverDisabled: Boolean!
+  canBeDeleted: Boolean!
+  isExcluded: Boolean!
+  childCategories: [Category!]!
+  spend: CategorySpend
+  budget(isRolloverEnabled: Boolean): CategoryBudget
+  keyMetrics: [CategoryKeyMetrics!]!
+}
+
+type CategoryTemplate {
+  id: ID!
+  name: String!
+  colorName: TagColorName!
+  icon: Icon
+  childCategories: [CategoryTemplate!]!
+}
+
+type CategorySpend {
+  current: CategoryMonthlySpent
+  histories: [CategoryMonthlySpent!]!
+}
+
+type CategoryMonthlySpent {
+  id: ID!
+  month: String!
+  amount: Float!
+  comparisonAmount: Float
+  paidRecurringAmount: Float!
+  unpaidRecurringAmount: Float!
+}
+
+type CategoryBudget {
+  current: CategoryMonthlyBudget
+  histories: [CategoryMonthlyBudget!]!
+}
+
+type CategoryMonthlyBudget {
+  id: ID!
+  month: String!
+  amount: Float!
+  goalAmount: Float!
+  rolloverAmount: Float!
+  childAmount: Float
+  childRolloverAmount: Float!
+  unassignedAmount: Float!
+  unassignedRolloverAmount: Float!
+  resolvedAmount: Float!
+}
+
+type CategoryKeyMetrics {
+  year: Int!
+  totalSpent: Float!
+  averageMonthlySpent: Float!
+}
+
+type CategoriesTotal {
+  spend: CategorySpend
+  budget: CategoryBudget
+  keyMetrics: [CategoryKeyMetrics!]!
+}
+
+type CategoriesDailySpent {
+  id: ID!
+  date: String!
+  totalAmount: Float!
+  comparisonAmount: Float
+}
+
+# ─── Tag ─────────────────────────────────────────────────────
+
+type Tag {
+  id: ID!
+  name: String!
+  colorName: TagColorName!
+}
+
+# ─── Goal ────────────────────────────────────────────────────
+
+type Goal {
+  id: ID!
+  name: String!
+  icon: Icon
+}
+
+# ─── Transaction ─────────────────────────────────────────────
+
+type Transaction {
+  id: ID!
+  name: String!
+  amount: Float!
+  date: String!
+  type: TransactionType!
+  categoryId: ID
+  accountId: ID!
+  itemId: ID!
+  recurringId: ID
+  parentId: ID          # set when this is a split child; parent has the original transaction
+  isReviewed: Boolean!
+  isPending: Boolean!
+  createdAt: Float!
+  tipAmount: Float!
+  isoCurrencyCode: String
+  userNotes: String
+  tags: [Tag!]!
+  goal: Goal
+  suggestedCategoryIds: [ID!]!
+}
+
+type TransactionEdge {
+  cursor: String!
+  node: Transaction!
+}
+
+type PageInfo {
+  hasNextPage: Boolean!
+  hasPreviousPage: Boolean!
+  startCursor: String
+  endCursor: String
+}
+
+type TransactionPagination {
+  edges: [TransactionEdge!]!
+  pageInfo: PageInfo!
+}
+
+type TransactionSummaryOutput {
+  transactionsCount: Int!
+  totalSpent: Float!
+  totalIncome: Float!
+  totalNetIncome: Float!
+}
+
+type TransactionMonth {
+  id: ID!
+  month: String!
+  amount: Float!
+}
+
+union TransactionFeedNode = Transaction | TransactionMonth
+
+type TransactionFeedEdge {
+  cursor: String!
+  node: TransactionFeedNode!
+}
+
+type TransactionFeed {
+  edges: [TransactionFeedEdge!]!
+  pageInfo: PageInfo!
+}
+
+type ExportTransactionsOutput {
+  url: String!
+  expiresAt: Float
+}
+
+# ─── Recurring ───────────────────────────────────────────────
+
+type Recurring {
+  id: ID!
+  name: String!
+  categoryId: ID
+  frequency: RecurringFrequency!
+  state: RecurringState!
+  emoji: String
+  icon: Icon
+  nextPaymentDate: String
+  nextPaymentAmount: Float
+  rule: RecurringRule
+  payments: [RecurringPayment!]!
+  keyMetrics(keyMetricsFrequency: RecurringKeyMetricsFrequency): [RecurringKeyMetric!]!
+}
+
+type RecurringRule {
+  nameContains: String
+  minAmount: Float
+  maxAmount: Float
+  days: [Int!]
+}
+
+type RecurringPayment {
+  date: String!
+  amount: Float!
+  isPaid: Boolean!
+}
+
+type RecurringKeyMetric {
+  period: String!
+  totalSpent: Float!
+  averageTransactionAmount: Float!
+}
+
+# ─── Networth ────────────────────────────────────────────────
+
+type NetworthHistory {
+  date: String!
+  assets: Float!
+  debt: Float!
+}
+
+type NetworthConfig {
+  combinesAssetsAndDebt: Boolean!
+  isSingleLine: Boolean!
+  excludedAccounts: [ExcludedAccount!]!
+}
+
+type ExcludedAccount {
+  id: ID!
+  itemId: ID!
+}
+
+# ─── Investment ──────────────────────────────────────────────
+
+type InvestmentConfig {
+  liveBalance: Boolean!
+  benchmarkHoldingId: ID
+  excludedAccounts: [ExcludedAccount!]!
+}
+
+type MarketInfo {
+  openTime: Float
+  closeTime: Float
+}
+
+type Security {
+  id: ID!
+  name: String!
+  symbol: String!
+  type: SecurityType!
+  currentPrice: Float
+  lastUpdate: Float
+  marketInfo: MarketInfo
+}
+
+type HoldingMetrics {
+  averageCost: Float
+  totalReturn: Float
+  costBasis: Float
+}
+
+type Holding {
+  id: ID!
+  accountId: ID!
+  itemId: ID!
+  quantity: Float!
+  security: Security!
+  metrics: HoldingMetrics
+}
+
+type InvestmentBalance {
+  id: ID!
+  date: String!
+  balance: Float!
+}
+
+type Allocation {
+  id: ID!
+  type: AllocationType!
+  amount: Float!
+  percentage: Float!
+}
+
+type AggregatedHolding {
+  security: AggregatedHoldingSecurity!
+  value: Float!
+  change: Float
+}
+
+type AggregatedHoldingSecurity {
+  id: ID!
+  name: String!
+  symbol: String!
+  type: SecurityType!
+  lastUpdate: Float
+  marketInfo: MarketInfo
+}
+
+type HighFrequencySecurityPrice {
+  id: ID!
+  timestamp: Float!
+  price: Float!
+}
+
+type TopMover {
+  security: Security!
+  values: [HighFrequencySecurityPrice!]!
+  change: Float
+}
+
+# ─── Referral ────────────────────────────────────────────────
+
+type Referral {
+  invitees: [ReferralInvitee!]!
+}
+
+type ReferralInvitee {
+  # Fields not yet enumerated
+  id: ID
+}
+
+# ─── User ────────────────────────────────────────────────────
+
+type RolloversCategory {
+  id: ID!
+  name: String!
+  colorName: TagColorName!
+  isRolloverDisabled: Boolean!
+  isExcluded: Boolean!
+  canBeDeleted: Boolean!
+}
+
+type RolloversConfig {
+  isEnabled: Boolean!
+  startDate: String
+  categories: [RolloversCategory!]!
+}
+
+type BudgetingConfig {
+  isEnabled: Boolean!
+  rolloversConfig: RolloversConfig
+}
+
+type Onboarding {
+  isCompleted: Boolean!
+  lastCompletedStep: String
+}
+
+type User {
+  id: ID!
+  intercomUserHash: String
+  serviceEndsOn: Date
+  termsStatus: TermsStatus
+  budgetingConfig: BudgetingConfig
+  onboarding: Onboarding
+  networthConfig: NetworthConfig
+  investmentConfig: InvestmentConfig
+}
+
+# ─── Input types ─────────────────────────────────────────────
+
+input AccountFilter {
+  type: AccountType
+  isHidden: Boolean
+  isClosed: Boolean
+}
+
+input TransactionFilter {
+  startDate: String
+  endDate: String
+  categoryId: ID
+  categoryIds: [ID!]
+  accountId: ID
+  accountIds: [ID!]
+  recurringId: ID
+  tagIds: [ID!]
+  isReviewed: Boolean
+  isPending: Boolean
+  search: String
+  matchString: String
+  minAmount: Float
+  maxAmount: Float
+}
+
+input TransactionSort {
+  field: TransactionSortField!
+  direction: SortDirection!
+}
+
+input EditTransactionInput {
+  name: String
+  amount: Float
+  date: String
+  categoryId: ID
+  recurringId: ID
+  isReviewed: Boolean
+  userNotes: String
+  tagIds: [ID!]
+  goalId: ID
+}
+
+input AddTransactionToRecurringInput {
+  recurringId: ID!
+  isExcluded: Boolean
+}
+
+input CreateTagInput {
+  name: String!
+  colorName: TagColorName!
+}
+
+input EditTagInput {
+  name: String
+  colorName: TagColorName
+}
+
+input RecurringFilter {
+  categoryId: ID
+  state: RecurringState
+}
+
+input CreateCategoryInput {
+  name: String!
+  colorName: TagColorName!
+  isExcluded: Boolean
+  childCategoryIds: [ID!]
+  budget: CreateCategoryBudgetInput
+}
+
+input CreateCategoryBudgetInput {
+  unassignedAmount: Float
+}
+
+input EditCategoryInput {
+  name: String
+  colorName: TagColorName
+  isExcluded: Boolean
+  childCategoryIds: [ID!]
+}
+
+input EditCategoryBudgetInput {
+  amount: Float
+}
+
+input EditCategoryBudgetMonthlyInput {
+  amount: Float
+  month: String
+}
+
+input CreateRecurringInput {
+  name: String!
+  frequency: RecurringFrequency!
+  categoryId: ID
+  transaction: CreateRecurringTransactionInput
+}
+
+input CreateRecurringTransactionInput {
+  transactionId: ID!
+  accountId: ID!
+  itemId: ID!
+}
+
+input EditRecurringInput {
+  name: String
+  frequency: RecurringFrequency
+  categoryId: ID
+}
+
+# ─── Mutation output types ───────────────────────────────────
+
+type EditTransactionOutput {
+  transaction: Transaction!
+}
+
+type AddTransactionToRecurringOutput {
+  transaction: Transaction!
+}
+
+type EditCategoryOutput {
+  category: Category!
+}
+
+type EditRecurringOutput {
+  recurring: Recurring!
+}
+
+# ─── Root types ──────────────────────────────────────────────
+
+type Query {
+  # User / auth
+  userExists: Boolean!
+  user: User
+  settings: User                          # alias for user; used by NetworthSettings / InvestmentSettings operations
+
+  # Subscriptions
+  subscription: Subscription
+  subscriptionPlans: [OfferedSubscriptionPlan!]!
+  trial: Trial
+  paymentMethods: [PaymentMethod!]!
+
+  # Referral
+  referral: Referral
+
+  # Accounts
+  accounts(filter: AccountFilter): [Account!]!
+  account(itemId: ID!, id: ID!): Account
+
+  # Account balance
+  accountLiveBalance(itemId: ID!, accountId: ID!): AccountBalanceHistory
+  accountMonthlyTotal(itemId: ID!, accountId: ID!): [MonthlyTotal!]!
+
+  # Connections (bank links)
+  connections: [Connection!]!
+  initConnection: Connection              # discovered via Clairvoyance; exact args unknown
+  institutions(
+    first: Int
+    after: String
+  ): InstitutionPagination
+  institution(id: ID!): Institution
+
+  # Transactions
+  transaction(itemId: ID!, accountId: ID!, id: ID!): Transaction
+  transactions(
+    first: Int
+    after: String
+    last: Int
+    before: String
+    filter: TransactionFilter
+    sort: [TransactionSort!]
+  ): TransactionPagination
+
+  transactionsFeed(
+    first: Int
+    after: String
+    last: Int
+    before: String
+    filter: TransactionFilter
+    sort: [TransactionSort!]
+  ): TransactionFeed
+
+  transactionsCount(filter: TransactionFilter): Int!
+  transactionsSummary(filter: TransactionFilter): TransactionSummaryOutput
+  exportTransactions(filter: TransactionFilter, sort: [TransactionSort!]): ExportTransactionsOutput
+
+  # Categories
+  categories: [Category!]!
+  category(id: ID!): Category
+  categoriesTotal: CategoriesTotal
+  categoryTemplates: [CategoryTemplate!]!
+
+  # Budgets / Spend
+  spends(history: Boolean): CategoriesTotal
+  monthlySpending: [CategoriesDailySpent!]!
+
+  # Tags
+  tags: [Tag!]!
+  tag(id: ID!): Tag
+
+  # Recurrings
+  recurrings(filter: RecurringFilter): [Recurring!]!
+  recurring(id: ID!): Recurring
+  upcomingRecurrings: [Recurring!]!
+  unpaidUpcomingRecurrings: [Recurring!]!
+
+  # Networth
+  networthHistory(timeFrame: TimeFrame): [NetworthHistory!]!
+  networthLiveBalance: NetworthHistory
+
+  # Investments
+  holdings: [Holding!]!
+  investmentBalance(timeFrame: TimeFrame): [InvestmentBalance!]!
+  investmentLiveBalance: InvestmentBalance
+  investmentAllocation(filter: AllocationFilter): [Allocation!]!
+  aggregatedHoldings(
+    timeFrame: TimeFrame
+    filter: AggregatedHoldingsFilter
+    accountId: ID
+    itemId: ID
+  ): [AggregatedHolding!]!
+  topMovers(filter: TopMoversFilter): [TopMover!]!
+}
+
+type Mutation {
+  # Transactions
+  editTransaction(
+    itemId: ID!
+    accountId: ID!
+    id: ID!
+    input: EditTransactionInput
+  ): EditTransactionOutput!
+
+  addTransactionToRecurring(
+    itemId: ID!
+    accountId: ID!
+    id: ID!
+    input: AddTransactionToRecurringInput!
+  ): AddTransactionToRecurringOutput!
+
+  # Tags
+  createTag(input: CreateTagInput!): Tag!
+  editTag(id: ID!, input: EditTagInput!): Tag!
+
+  # Categories
+  createCategory(input: CreateCategoryInput!, spend: Boolean, budget: Boolean): Category!
+  editCategory(id: ID!, input: EditCategoryInput!, spend: Boolean, budget: Boolean, rollovers: Boolean): EditCategoryOutput!
+  deleteCategory(id: ID!): Boolean
+
+  # Category budgets
+  editCategoryBudget(categoryId: ID!, input: EditCategoryBudgetInput!): Boolean
+  editCategoryBudgetMonthly(categoryId: ID!, input: EditCategoryBudgetMonthlyInput!): Boolean
+
+  # Recurrings
+  createRecurring(input: CreateRecurringInput!): Recurring!
+  editRecurring(id: ID!, input: EditRecurringInput!): EditRecurringOutput!
+  deleteRecurring(id: ID!): Boolean
+}
