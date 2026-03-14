@@ -1,11 +1,11 @@
-import { readFileSync } from 'fs';
-import { resolve } from 'path';
 import { pool } from '../shared/db.js';
-import { runPreprocessPrompt } from './llm.js';
+import { runPreprocessPrompt, type LLMResult } from './llm.js';
+import { getIdMaps, getAccountMap, replaceIdsWithNames, resolveResultIds } from './ids.js';
+import { buildPrompt } from './prompt.js';
 import { gql } from '../client.js';
 import { EDIT_TRANSACTION_MUTATION } from '../tools/transactions.js';
 
-interface TransactionKey {
+export interface TransactionKey {
   itemId: string;
   accountId: string;
   id: string;
@@ -41,20 +41,13 @@ function globToRegex(pattern: string): RegExp {
   return new RegExp(`^${regexStr}$`, 'i');
 }
 
-export async function runProcessor(keys: TransactionKey[]): Promise<number> {
-  if (keys.length === 0) return 0;
+export async function processSingleTransaction(key: TransactionKey): Promise<boolean> {
+  const { itemId, accountId, id } = key;
 
-  const itemIds = keys.map(k => k.itemId);
-  const accountIds = keys.map(k => k.accountId);
-  const ids = keys.map(k => k.id);
-
-  // Query eligible transactions from the candidate set
-  const txResult = await pool.query<DbTransaction>(
+  const transactionResult = await pool.query<DbTransaction>(
     `SELECT t.* FROM transactions t
-     JOIN unnest($1::text[], $2::text[], $3::text[]) AS k(item_id, account_id, txn_id)
-       ON t.item_id = k.item_id AND t.account_id = k.account_id AND t.id = k.txn_id
-     WHERE t.is_reviewed = false
-       AND t.is_pending = false
+     WHERE t.item_id = $1 AND t.account_id = $2 AND t.id = $3
+       AND t.is_reviewed = false
        AND NOT EXISTS (
          SELECT 1 FROM transaction_preprocess_results r
          WHERE r.item_id = t.item_id
@@ -63,94 +56,154 @@ export async function runProcessor(keys: TransactionKey[]): Promise<number> {
            AND r.applied = true
            AND r.dry_run = false
        )`,
-    [itemIds, accountIds, ids]
+    [itemId, accountId, id]
   );
 
-  const eligible = txResult.rows;
-  if (eligible.length === 0) return 0;
+  if (transactionResult.rows.length === 0) return false;
+  const transaction = transactionResult.rows[0]!;
 
   const rulesResult = await pool.query<DbRule>(
     'SELECT id, match, instruction FROM rules WHERE archived = false'
   );
   const rules = rulesResult.rows;
 
-  let categorizer: string;
-  try {
-    categorizer = readFileSync(resolve(process.cwd(), 'TRANSACTION_CATEGORIZER.md'), 'utf8');
-  } catch {
-    console.error('[processor] TRANSACTION_CATEGORIZER.md not found — skipping preprocessing');
-    return 0;
-  }
-
+  const [idMaps, accountMap] = await Promise.all([getIdMaps(), getAccountMap()]);
   const dryRun = process.env['DRY_RUN'] !== 'false';
-  let processedCount = 0;
 
-  for (const tx of eligible) {
-    try {
-      const matchedRules = rules.filter(r => globToRegex(r.match).test(tx.name ?? ''));
-      const matchedRuleIds = matchedRules.map(r => r.id);
-      const rulesText = matchedRules.length
-        ? matchedRules.map(r => `- ${r.instruction}`).join('\n')
-        : '(none)';
+  try {
+    const recurringName = transaction.recurring_id
+      ? idMaps.recurringIdToName[transaction.recurring_id]
+      : undefined;
 
-      const systemPrompt = categorizer
-        .replace('{{matched_rules}}', rulesText)
-        .replace('{{transaction}}', JSON.stringify(tx.raw_json, null, 2));
+    const matchedRules = rules.filter(rule => globToRegex(rule.match).test(transaction.name ?? ''));
+    const matchedRuleIds = matchedRules.map(rule => rule.id);
 
-      const txJson = JSON.stringify(tx.raw_json, null, 2);
-      const { result, provider, model } = await runPreprocessPrompt(systemPrompt, txJson);
+    const account = accountMap[`${transaction.item_id}:${transaction.account_id}`];
 
-      if (dryRun) {
-        console.log(JSON.stringify({
-          id: tx.id,
-          name: tx.name,
-          amount: tx.amount,
-          matchedRules: matchedRuleIds,
-          wouldApply: result,
-        }));
-      } else {
-        const input: Record<string, unknown> = {};
-        if (result.name !== undefined) input['name'] = result.name;
-        if (result.categoryId !== undefined) input['categoryId'] = result.categoryId;
-        if (result.type !== undefined) input['type'] = result.type;
-        if (result.userNotes !== undefined) input['userNotes'] = result.userNotes;
-        if (result.tagIds !== undefined) input['tagIds'] = result.tagIds;
+    const raw = transaction.raw_json as {
+        name: string | null;
+        amount: number;
+        date: string;
+        type: string | null;
+        categoryId: string | null;
+        recurringId: string | null;
+        isPending: boolean | null;
+        userNotes: string | null;
+        tags?: Array<{ id: string; name: string }>;
+        suggestedCategoryIds?: string[] | null;
+      };
 
-        if (Object.keys(input).length > 0) {
-          await gql(EDIT_TRANSACTION_MUTATION, {
-            itemId: tx.item_id,
-            accountId: tx.account_id,
-            id: tx.id,
-            input,
-          });
-        }
+      const tagSlugs = (raw.tags ?? []).map(t => idMaps.tagIdToSlug[t.id] ?? t.name);
+      const curated: Record<string, unknown> = {
+        name: raw.name,
+        amount: raw.amount,
+        date: raw.date,
+        type: raw.type,
+        categoryId: raw.categoryId,
+        isRecurring: raw.recurringId != null,
+        recurringName,
+        isPending: raw.isPending ?? undefined,
+        tags: tagSlugs.length > 0 ? tagSlugs : undefined,
+        suggestedCategoryIds: (raw.suggestedCategoryIds?.length ?? 0) > 0
+          ? raw.suggestedCategoryIds : undefined,
+        userNotes: raw.userNotes ?? undefined,
+        account: account ? {
+          name: account.name,
+          ...(account.type && { type: account.type }),
+          ...(account.subType && { subType: account.subType }),
+        } : undefined,
+      };
+
+      for (const k of Object.keys(curated)) {
+        if (curated[k] === undefined || curated[k] === null) delete curated[k];
       }
 
-      await pool.query(
-        `INSERT INTO transaction_preprocess_results (
-           item_id, account_id, transaction_id,
-           orig_name, orig_category_id, orig_type, orig_notes, orig_tag_ids,
-           matched_rule_ids,
-           llm_name, llm_category_id, llm_type, llm_notes, llm_tag_ids, llm_raw_output,
-           llm_provider, llm_model,
-           dry_run, applied, applied_at
-         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
-        [
-          tx.item_id, tx.account_id, tx.id,
-          tx.name, tx.category_id, tx.type, tx.user_notes, tx.tag_ids,
-          matchedRuleIds,
-          result.name ?? null, result.categoryId ?? null, result.type ?? null,
-          result.userNotes ?? null, result.tagIds ?? null, result,
-          provider, model,
-          dryRun, !dryRun, dryRun ? null : new Date(),
-        ]
-      );
+      const systemPrompt = buildPrompt(idMaps, matchedRules);
+      const transactionJson = replaceIdsWithNames(JSON.stringify(curated, null, 2), idMaps);
+      const llmOut = await runPreprocessPrompt(systemPrompt, transactionJson, idMaps);
+      const result = llmOut.result;
+      const provider = llmOut.provider;
+      const model = llmOut.model;
+      const resolved = resolveResultIds(result, idMaps);
+      if (resolved.categoryId !== undefined) result.categoryId = resolved.categoryId;
+      if (resolved.tagIds !== undefined) result.tagIds = resolved.tagIds;
 
-      processedCount++;
-    } catch (err) {
-      console.error(`[processor] error processing tx ${tx.id}:`, err);
+    if (dryRun) {
+      const origCategory = transaction.category_id
+        ? (idMaps.categoryIdToSlug[transaction.category_id] ?? transaction.category_id)
+        : null;
+      const origTags = (transaction.tag_ids ?? []).map(id => idMaps.tagIdToSlug[id] ?? id);
+
+      const fields = ['name', 'type', 'categoryId', 'tagIds'] as const;
+      const before: Record<string, unknown> = {
+        name: transaction.name,
+        type: transaction.type,
+        categoryId: origCategory,
+        tagIds: origTags.length > 0 ? origTags : undefined,
+      };
+      const after: Record<string, unknown> = {
+        name: result.name,
+        type: result.type,
+        categoryId: result.categoryId ? (idMaps.categoryIdToSlug[result.categoryId] ?? result.categoryId) : undefined,
+        tagIds: result.tagIds?.map(id => idMaps.tagIdToSlug[id] ?? id),
+      };
+
+      const BOLD = '\x1b[1m'; const GREEN = '\x1b[32m'; const RESET = '\x1b[0m';
+      const fmt = (val: unknown) => val == null || (Array.isArray(val) && val.length === 0) ? '(none)' : JSON.stringify(val);
+      const lines: string[] = [`[dry-run] ${transaction.id}  $${transaction.amount}`];
+      for (const f of fields) {
+        const b = before[f]; const a = after[f];
+        const changed = a !== undefined && JSON.stringify(a) !== JSON.stringify(b);
+        const label = `  ${f.padEnd(12)}`;
+        if (changed) {
+          lines.push(`${label}${fmt(b)} → ${BOLD}${GREEN}${fmt(a)}${RESET}`);
+        } else {
+          lines.push(`${label}${fmt(b)}`);
+        }
+      }
+      if (matchedRuleIds.length > 0) lines.push(`  rules:      ${matchedRuleIds.join(', ')}`);
+      if (result.debug) lines.push(`  ${result.debug}`);
+      console.log(lines.join('\n'));
+    } else {
+      const input: Record<string, unknown> = {};
+      if (result.name !== undefined) input['name'] = result.name;
+      if (result.categoryId !== undefined) input['categoryId'] = result.categoryId;
+      if (result.type !== undefined) input['type'] = result.type;
+      if (result.tagIds !== undefined) input['tagIds'] = result.tagIds;
+
+      if (Object.keys(input).length > 0) {
+        await gql(EDIT_TRANSACTION_MUTATION, {
+          itemId: transaction.item_id,
+          accountId: transaction.account_id,
+          id: transaction.id,
+          input,
+        });
+      }
     }
-  }
 
-  return processedCount;
+    await pool.query(
+      `INSERT INTO transaction_preprocess_results (
+         item_id, account_id, transaction_id,
+         orig_name, orig_category_id, orig_type, orig_notes, orig_tag_ids,
+         matched_rule_ids,
+         llm_name, llm_category_id, llm_type, llm_notes, llm_tag_ids, llm_debug, llm_raw_output,
+         llm_provider, llm_model,
+         dry_run, applied, applied_at
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)`,
+      [
+        transaction.item_id, transaction.account_id, transaction.id,
+        transaction.name, transaction.category_id, transaction.type, transaction.user_notes, transaction.tag_ids,
+        matchedRuleIds,
+        result.name ?? null, result.categoryId ?? null, result.type ?? null,
+        null, result.tagIds ?? null, result.debug ?? null, result,
+        provider, model,
+        dryRun, !dryRun, dryRun ? null : new Date(),
+      ]
+    );
+
+    return true;
+  } catch (err) {
+    console.error(`[processor] error processing transaction ${transaction.id}:`, err);
+    return false;
+  }
 }

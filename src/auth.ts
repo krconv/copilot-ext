@@ -1,19 +1,20 @@
 import 'dotenv/config';
-import { readFileSync, writeFileSync } from 'fs';
-import { resolve } from 'path';
+import { pool } from './shared/db.js';
 
-const TOKEN_FILE = resolve(process.cwd(), '.firebase-refresh-token');
-
-function readStoredRefreshToken(): string | null {
-  try {
-    return readFileSync(TOKEN_FILE, 'utf8').trim() || null;
-  } catch {
-    return null;
-  }
+async function readStoredRefreshToken(): Promise<string | null> {
+  const result = await pool.query<{ refresh_token: string }>(
+    'SELECT refresh_token FROM auth_tokens WHERE id = 1'
+  );
+  return result.rows[0]?.refresh_token ?? null;
 }
 
-function writeStoredRefreshToken(token: string): void {
-  writeFileSync(TOKEN_FILE, token, 'utf8');
+async function writeStoredRefreshToken(token: string): Promise<void> {
+  await pool.query(
+    `INSERT INTO auth_tokens (id, refresh_token, updated_at)
+     VALUES (1, $1, now())
+     ON CONFLICT (id) DO UPDATE SET refresh_token = EXCLUDED.refresh_token, updated_at = now()`,
+    [token]
+  );
 }
 
 interface TokenState {
@@ -56,17 +57,17 @@ async function doRefresh(currentRefreshToken: string): Promise<TokenState> {
     refreshToken: data.refresh_token,
     expiresAt: Date.now() + parseInt(data.expires_in, 10) * 1000,
   };
-  writeStoredRefreshToken(state.refreshToken);
+  await writeStoredRefreshToken(state.refreshToken);
   return state;
 }
 
 export async function getToken(): Promise<string> {
   const fiveMinutes = 5 * 60 * 1000;
   if (!tokenState) {
-    const storedRefreshToken = readStoredRefreshToken() ?? process.env['FIREBASE_REFRESH_TOKEN'];
+    const storedRefreshToken = (await readStoredRefreshToken()) ?? process.env['FIREBASE_REFRESH_TOKEN'];
     if (!storedRefreshToken) {
       throw new Error(
-        'No refresh token found. Set FIREBASE_REFRESH_TOKEN env var or create a .firebase-refresh-token file.'
+        'No refresh token found. Set FIREBASE_REFRESH_TOKEN env var or seed the auth_tokens table.'
       );
     }
     tokenState = await doRefresh(storedRefreshToken);
