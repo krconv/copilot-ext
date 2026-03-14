@@ -1,11 +1,18 @@
-version: '3.9'
 services:
+  app:
+    build: .
+    ports:
+      - '3000:3000'
+    env_file: .env
+    depends_on:
+      - db
+
   db:
-    image: postgres:16-alpine
+    image: postgres:17-alpine
     environment:
       POSTGRES_USER: copilot
       POSTGRES_PASSWORD: copilot
-      POSTGRES_DB: copilot_preprocessor
+      POSTGRES_DB: copilot_ext
     ports:
       - '5432:5432'
     volumes:
