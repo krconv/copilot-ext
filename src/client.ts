@@ -19,12 +19,13 @@ type ToolContent = { content: Array<{ type: 'text'; text: string }> };
 export function registerTool<T extends ZodShape>(
   server: McpServer,
   name: string,
+  title: string,
   description: string,
   inputSchema: T,
   handler: (args: InferShape<T>) => Promise<ToolContent>
 ): void {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (server.registerTool as any)(name, { description, inputSchema }, handler);
+  (server.registerTool as any)(name, { title, description, inputSchema }, handler);
 }
 
 const GRAPHQL_URL = 'https://app.copilot.money/api/graphql';

@@ -12,6 +12,7 @@ export function registerInvestmentTools(server: McpServer): void {
   registerTool(
     server,
     'get_networth_history',
+    'Get Net Worth History',
     `Get net worth history (assets and debt) over a time period. ${TF_DESC}`,
     {
       timeFrame: z.enum(TIME_FRAMES).default('ONE_MONTH').describe('Time range for history'),
@@ -32,6 +33,7 @@ export function registerInvestmentTools(server: McpServer): void {
   registerTool(
     server,
     'get_investment_summary',
+    'Get Investment Summary',
     `Get investment portfolio summary: balance history and asset allocation breakdown.
 ${TF_DESC}
 AllocationType options: TYPE (by security type), ACCOUNT (by account)`,
@@ -70,6 +72,7 @@ AllocationType options: TYPE (by security type), ACCOUNT (by account)`,
   registerTool(
     server,
     'get_holdings',
+    'Get Holdings',
     'Get all investment holdings across all accounts, including security details, quantity, cost basis, and total return.',
     {},
     async () => {

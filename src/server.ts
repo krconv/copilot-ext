@@ -35,9 +35,7 @@ function createMcpServer(): McpServer {
   return server;
 }
 
-// Stateless: create a new transport + server instance per request.
-// This avoids session management complexity and stale-session errors on restart.
-app.post('/mcp', async (req, res) => {
+async function handleMcp(req: express.Request, res: express.Response): Promise<void> {
   const transport = new StreamableHTTPServerTransport({
     sessionIdGenerator: undefined,
     enableJsonResponse: true,
@@ -46,7 +44,13 @@ app.post('/mcp', async (req, res) => {
   const server = createMcpServer();
   await server.connect(transport);
   await transport.handleRequest(req, res, req.body);
-});
+}
+
+// Stateless: create a new transport + server instance per request.
+// This avoids session management complexity and stale-session errors on restart.
+// Serve at both / and /mcp so clients can use either URL.
+app.post('/', handleMcp);
+app.post('/mcp', handleMcp);
 
 app.get('/health', (_req, res) => {
   res.json({ ok: true, uptime: process.uptime() });

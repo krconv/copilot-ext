@@ -25,6 +25,7 @@ export function registerRecurringTools(server: McpServer): void {
   registerTool(
     server,
     'list_recurrings',
+    'List Recurrings',
     'List recurring payment rules. Can filter by state (ACTIVE/PAUSED/DELETED) and/or category. Returns rule details including next payment date, amount, and matched payment history.',
     {
       state: z.enum(['ACTIVE', 'PAUSED', 'DELETED']).optional().describe('Filter by recurring state'),
@@ -54,6 +55,7 @@ export function registerRecurringTools(server: McpServer): void {
   registerTool(
     server,
     'get_recurring',
+    'Get Recurring',
     'Get a single recurring rule by ID, including its detection rule and payment history.',
     {
       id: z.string().describe('Recurring rule ID'),
@@ -77,6 +79,7 @@ export function registerRecurringTools(server: McpServer): void {
   registerTool(
     server,
     'list_upcoming_recurrings',
+    'List Upcoming Recurrings',
     'List all active recurring rules with their next payment date and amount.',
     {},
     async () => {
@@ -98,6 +101,7 @@ export function registerRecurringTools(server: McpServer): void {
   registerTool(
     server,
     'list_unpaid_upcoming_recurrings',
+    'List Unpaid Upcoming Recurrings',
     'List active recurring rules that have upcoming unpaid payments. Only includes recurrings where the next payment has not been matched/paid yet.',
     {},
     async () => {
@@ -119,6 +123,7 @@ export function registerRecurringTools(server: McpServer): void {
   registerTool(
     server,
     'create_recurring',
+    'Create Recurring',
     `Create a new recurring payment rule. ${FREQ_DESC}
 Optionally link a seed transaction to help the rule detect future payments.`,
     {
@@ -159,6 +164,7 @@ Optionally link a seed transaction to help the rule detect future payments.`,
   registerTool(
     server,
     'edit_recurring',
+    'Edit Recurring',
     `Update an existing recurring rule. All fields are optional. ${FREQ_DESC}`,
     {
       id: z.string().describe('Recurring rule ID'),
@@ -192,6 +198,7 @@ Optionally link a seed transaction to help the rule detect future payments.`,
   registerTool(
     server,
     'delete_recurring',
+    'Delete Recurring',
     'Delete a recurring rule by ID. This removes the rule and stops future transaction matching.',
     {
       id: z.string().describe('Recurring rule ID'),

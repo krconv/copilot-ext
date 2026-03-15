@@ -15,6 +15,7 @@ export function registerRulesTools(server: McpServer): void {
   registerTool(
     server,
     'list_rules',
+    'List Rules',
     'List transaction preprocessing rules. Rules are glob patterns (* = any chars, ? = one char, case-insensitive) matched against transaction names during preprocessing.',
     { includeArchived: z.boolean().default(false).describe('Include archived rules') },
     async ({ includeArchived }) => {
@@ -30,6 +31,7 @@ export function registerRulesTools(server: McpServer): void {
   registerTool(
     server,
     'create_rule',
+    'Create Rule',
     'Create a new preprocessing rule. The match pattern is a glob (case-insensitive) matched against transaction names. The instruction is added to the LLM prompt when the rule matches.',
     {
       match: z.string().describe('Glob pattern to match against transaction name (e.g. "AMZN *", "TST *")'),
@@ -47,6 +49,7 @@ export function registerRulesTools(server: McpServer): void {
   registerTool(
     server,
     'update_rule',
+    'Update Rule',
     'Update the match pattern and/or instruction of an existing rule.',
     {
       id: z.number().int().describe('Rule ID'),
@@ -72,6 +75,7 @@ export function registerRulesTools(server: McpServer): void {
   registerTool(
     server,
     'archive_rule',
+    'Archive Rule',
     'Archive a rule (soft delete). Archived rules are excluded from preprocessing matches.',
     { id: z.number().int().describe('Rule ID') },
     async ({ id }) => {
@@ -87,6 +91,7 @@ export function registerRulesTools(server: McpServer): void {
   registerTool(
     server,
     'unarchive_rule',
+    'Unarchive Rule',
     'Restore a previously archived rule.',
     { id: z.number().int().describe('Rule ID') },
     async ({ id }) => {

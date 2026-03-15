@@ -71,6 +71,7 @@ export function registerTransactionTools(server: McpServer): void {
   registerTool(
     server,
     'list_transactions',
+    'List Transactions',
     'List and filter transactions with pagination. Returns transactions with their ids, amounts, dates, categories, tags, and notes. Use pageInfo.endCursor + after param to paginate.',
     {
       ...filterSchema,
@@ -100,6 +101,7 @@ export function registerTransactionTools(server: McpServer): void {
   registerTool(
     server,
     'get_transaction',
+    'Get Transaction',
     'Get a single transaction by its composite key (itemId + accountId + id). All three fields are required and can be found in list_transactions results.',
     {
       itemId: z.string().describe('Item/institution connection ID'),
@@ -123,6 +125,7 @@ export function registerTransactionTools(server: McpServer): void {
   registerTool(
     server,
     'edit_transaction',
+    'Edit Transaction',
     `Update editable fields on a transaction. Requires the composite key (itemId + accountId + id).
 
 All input fields are optional — only provide what you want to change:
@@ -176,6 +179,7 @@ All input fields are optional — only provide what you want to change:
   registerTool(
     server,
     'get_transactions_summary',
+    'Get Transactions Summary',
     'Get aggregate stats (total count, net income, total income, total spent) for a set of transactions matching the given filter.',
     { ...filterSchema },
     async (args) => {
@@ -194,6 +198,7 @@ All input fields are optional — only provide what you want to change:
   registerTool(
     server,
     'export_transactions',
+    'Export Transactions',
     'Get a CSV download URL for transactions matching the given filter. The URL expires after a short period.',
     { ...filterSchema, ...sortSchema },
     async (args) => {

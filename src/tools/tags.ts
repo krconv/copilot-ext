@@ -21,6 +21,7 @@ export function registerTagTools(server: McpServer): void {
   registerTool(
     server,
     'list_tags',
+    'List Tags',
     'List all tags available in the workspace.',
     {},
     async () => {
@@ -38,6 +39,7 @@ export function registerTagTools(server: McpServer): void {
   registerTool(
     server,
     'create_tag',
+    'Create Tag',
     `Create a new tag. ${COLOR_DESC}`,
     {
       name: z.string().describe('Tag name'),
@@ -58,6 +60,7 @@ export function registerTagTools(server: McpServer): void {
   registerTool(
     server,
     'edit_tag',
+    'Edit Tag',
     `Update an existing tag. All fields are optional. ${COLOR_DESC}`,
     {
       id: z.string().describe('Tag ID'),

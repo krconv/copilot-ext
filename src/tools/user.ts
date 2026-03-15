@@ -5,6 +5,7 @@ export function registerUserTools(server: McpServer): void {
   registerTool(
     server,
     'get_user',
+    'Get User',
     'Get the current authenticated user profile including budgeting configuration, onboarding status, and subscription end date.',
     {},
     async () => {

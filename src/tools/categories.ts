@@ -36,6 +36,7 @@ export function registerCategoryTools(server: McpServer): void {
   registerTool(
     server,
     'list_categories',
+    'List Categories',
     'List all categories including their spend and budget data for the current and past months. Returns parent categories with their child categories nested.',
     {
       includeSpend: z.boolean().default(true).describe('Include spend history'),
@@ -68,6 +69,7 @@ export function registerCategoryTools(server: McpServer): void {
   registerTool(
     server,
     'create_category',
+    'Create Category',
     `Create a new category (or category group). ${COLOR_DESC}
 To create a category group, pass childCategoryIds with the IDs of existing categories to include.`,
     {
@@ -96,6 +98,7 @@ To create a category group, pass childCategoryIds with the IDs of existing categ
   registerTool(
     server,
     'edit_category',
+    'Edit Category',
     `Update an existing category. All input fields are optional. ${COLOR_DESC}`,
     {
       id: z.string().describe('Category ID'),
@@ -130,6 +133,7 @@ To create a category group, pass childCategoryIds with the IDs of existing categ
   registerTool(
     server,
     'delete_category',
+    'Delete Category',
     'Delete a category. Will fail if canBeDeleted is false (category has transactions or child categories). Check canBeDeleted field from list_categories first.',
     {
       id: z.string().describe('Category ID'),
@@ -148,6 +152,7 @@ To create a category group, pass childCategoryIds with the IDs of existing categ
   registerTool(
     server,
     'set_category_budget',
+    'Set Category Budget',
     'Set a uniform monthly budget amount for a category (applies to all future months).',
     {
       categoryId: z.string().describe('Category ID'),
@@ -170,6 +175,7 @@ To create a category group, pass childCategoryIds with the IDs of existing categ
   registerTool(
     server,
     'set_category_budget_monthly',
+    'Set Category Budget (Monthly)',
     'Set the budget for a specific month for a category. Use this to override the default budget for a particular month.',
     {
       categoryId: z.string().describe('Category ID'),

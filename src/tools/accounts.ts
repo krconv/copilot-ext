@@ -14,6 +14,7 @@ export function registerAccountTools(server: McpServer): void {
   registerTool(
     server,
     'list_accounts',
+    'List Accounts',
     `List all connected accounts with their current balances.
 Account types: CREDIT, DEPOSITORY, INVESTMENT, LOAN, MORTGAGE, OTHER
 By default returns visible, open accounts. Use includeHidden/includeClosed to see all.`,
@@ -46,6 +47,7 @@ By default returns visible, open accounts. Use includeHidden/includeClosed to se
   registerTool(
     server,
     'get_account',
+    'Get Account',
     'Get details for a single account by its itemId and id. Both fields are available in list_accounts results.',
     {
       itemId: z.string().describe('Item/institution connection ID'),
@@ -66,6 +68,7 @@ By default returns visible, open accounts. Use includeHidden/includeClosed to se
   registerTool(
     server,
     'get_account_live_balance',
+    'Get Account Live Balance',
     'Fetch the real-time balance directly from the financial institution for an account. Only works for accounts where hasLiveBalance is true.',
     {
       itemId: z.string().describe('Item/institution connection ID'),
