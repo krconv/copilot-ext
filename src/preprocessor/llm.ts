@@ -125,14 +125,16 @@ export async function runPreprocessPrompt(
     },
     stopWhen: isStepCount(10),
     output: Output.object({ schema: LLMResultSchema }),
-    messages: [
-      {
-        role: 'system',
-        content: systemPrompt,
-        providerOptions: { anthropic: { cacheControl: { type: 'ephemeral' } } },
-      },
-      { role: 'user', content: txJson },
-    ],
+    // The catalog goes in `instructions` (a system message), not `messages` —
+    // the AI SDK rejects role:'system' entries in `messages`. The ephemeral
+    // cacheControl breakpoint stays on it so the catalog prefix is cached across
+    // tool-call round-trips; the per-transaction user message stays uncached.
+    instructions: {
+      role: 'system',
+      content: systemPrompt,
+      providerOptions: { anthropic: { cacheControl: { type: 'ephemeral' } } },
+    },
+    messages: [{ role: 'user', content: txJson }],
   });
 
   return { result: output, provider: 'ai-sdk-anthropic', model: modelName };
