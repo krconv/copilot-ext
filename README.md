@@ -36,9 +36,10 @@ A background daemon that watches for new transactions and runs them through a Cl
 
 **How the agent decides:**
 
-The LLM receives the raw transaction alongside your full category/tag list, matched rule instructions, and has access to three tools:
+The LLM receives the raw transaction alongside your full category/tag list, matched rule instructions, and has access to four tools:
 
 - `search_merchant_names` — finds how you've named similar merchants in the past (uses trigram similarity on reviewed transactions)
+- `search_merchant_category_stats` — shows how a merchant has been categorized historically, as a distribution, so the agent anchors on your actual history
 - `search_transactions` — looks up similar transactions in your history
 - `web_search` — identifies unfamiliar merchants (limited to 3 uses per transaction)
 
@@ -159,7 +160,7 @@ Copilot Money API (GraphQL)
 
 - **Runtime**: Node.js 22 + TypeScript
 - **MCP**: `@modelcontextprotocol/sdk`
-- **LLM**: Claude via `@langchain/anthropic` + LangChain agent framework
+- **LLM**: Claude via the [Vercel AI SDK](https://ai-sdk.dev) (`ai` + `@ai-sdk/anthropic`)
 - **Database**: PostgreSQL with `pg`
 - **HTTP**: Express
 - **Schema validation**: Zod

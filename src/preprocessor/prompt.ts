@@ -106,6 +106,7 @@ Apply \`tagIds\` only when clearly appropriate. Use the slug in backticks. Do no
 ## Tools
 
 - **\`search_merchant_names\`** — use before setting any \`name\` to find the canonical form already used in this account.
+- **\`search_merchant_category_stats\`** — use before setting \`categoryId\` to see how this merchant has been categorised before; prefer the dominant category unless context clearly points elsewhere.
 - **\`search_transactions\`** — use when a bank code is cryptic or you want to confirm a merchant's usual category from history.
 - **Web search** — use when you can't identify the merchant from history. Search sparingly.
 

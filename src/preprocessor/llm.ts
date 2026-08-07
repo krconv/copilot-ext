@@ -1,10 +1,10 @@
-import { createAgent, tool, providerStrategy } from 'langchain';
-import { ChatAnthropic, tools as anthropicTools } from '@langchain/anthropic';
+import { generateText, tool, Output, isStepCount } from 'ai';
+import { anthropic } from '@ai-sdk/anthropic';
 import { z } from 'zod';
 import { pool } from '../shared/db.js';
 import { type IdMaps } from './ids.js';
 
-const LLMResultSchema = z.object({
+export const LLMResultSchema = z.object({
   name: z.string().optional().describe('Proper merchant name'),
   type: z.enum(['REGULAR', 'INCOME', 'INTERNAL_TRANSFER']).optional().describe('Transaction type'),
   categoryId: z.string().optional().describe('Category slug to apply'),
@@ -14,10 +14,19 @@ const LLMResultSchema = z.object({
 
 export type LLMResult = z.infer<typeof LLMResultSchema>;
 
-
 function searchMerchantNames() {
-  return tool(
-    async ({ query, limit = 20, offset = 0 }: { query: string; limit?: number; offset?: number }) => {
+  return tool({
+    description:
+      'Find existing merchant name variants in this account. Call this before setting a name — ' +
+      'the goal is to use whatever canonical form is already established, not invent a new one. ' +
+      'Returns { name, transactions }[] sorted by similarity; prefer the variant with the highest transaction count. ' +
+      'If no results exist, use the clean recognizable merchant name.',
+    inputSchema: z.object({
+      query: z.string().describe('Merchant name or keyword to search for'),
+      limit: z.number().optional().describe('Max results to return (default 20)'),
+      offset: z.number().optional().describe('Offset for pagination (default 0)'),
+    }),
+    execute: async ({ query, limit = 20, offset = 0 }) => {
       const result = await pool.query<{ name: string; transactions: number }>(
         `SELECT name, COUNT(*)::int AS transactions
          FROM transactions
@@ -29,27 +38,21 @@ function searchMerchantNames() {
          LIMIT $3 OFFSET $4`,
         [`%${query}%`, query, limit, offset]
       );
-      return JSON.stringify(result.rows);
+      return result.rows;
     },
-    {
-      name: 'search_merchant_names',
-      description:
-        'Find existing merchant name variants in this account. Call this before setting a name — ' +
-        'the goal is to use whatever canonical form is already established, not invent a new one. ' +
-        'Returns { name, transactions }[] sorted by similarity; prefer the variant with the highest transaction count. ' +
-        'If no results exist, use the clean recognizable merchant name.',
-      schema: z.object({
-        query: z.string().describe('Merchant name or keyword to search for'),
-        limit: z.number().optional().describe('Max results to return (default 20)'),
-        offset: z.number().optional().describe('Offset for pagination (default 0)'),
-      }),
-    }
-  );
+  });
 }
 
 function transactionSearch(idMaps: IdMaps) {
-  return tool(
-    async ({ query }: { query: string }) => {
+  return tool({
+    description:
+      'Search past transactions by keyword across original_name, cleaned name, and notes. ' +
+      'Returns recent matches with their category and type — use this to resolve cryptic bank codes ' +
+      'or confirm how a merchant has been categorised before.',
+    inputSchema: z.object({
+      query: z.string().describe('Keyword or merchant name to search for'),
+    }),
+    execute: async ({ query }) => {
       const result = await pool.query<{
         name: string | null;
         original_name: string | null;
@@ -66,25 +69,43 @@ function transactionSearch(idMaps: IdMaps) {
          LIMIT 15`,
         [`%${query}%`]
       );
-      const rows = result.rows.map(row => ({
+      return result.rows.map(row => ({
         ...row,
         category_id: row.category_id
           ? (idMaps.categoryIdToSlug[row.category_id] ?? row.category_id)
           : null,
       }));
-      return JSON.stringify(rows);
     },
-    {
-      name: 'search_transactions',
-      description:
-        'Search past transactions by keyword across original_name, cleaned name, and notes. ' +
-        'Returns recent matches with their category and type — use this to resolve cryptic bank codes ' +
-        'or confirm how a merchant has been categorised before.',
-      schema: z.object({
-        query: z.string().describe('Keyword or merchant name to search for'),
-      }),
-    }
-  );
+  });
+}
+
+function searchMerchantCategoryStats(idMaps: IdMaps) {
+  return tool({
+    description:
+      'Given a merchant name or keyword, returns how that merchant has been categorised historically ' +
+      'as a distribution of { category, count } sorted by frequency. ' +
+      'Use this to anchor categorization on the user\'s actual history rather than guessing — ' +
+      'the most frequent category is usually the right one.',
+    inputSchema: z.object({
+      query: z.string().describe('Merchant name or keyword to search for'),
+    }),
+    execute: async ({ query }) => {
+      const result = await pool.query<{ category_id: string; count: number }>(
+        `SELECT category_id, COUNT(*)::int AS count
+         FROM transactions
+         WHERE (name ILIKE $1 OR original_name ILIKE $1)
+           AND category_id IS NOT NULL
+         GROUP BY category_id
+         ORDER BY count DESC
+         LIMIT 10`,
+        [`%${query}%`]
+      );
+      return result.rows.map(row => ({
+        category: idMaps.categoryIdToSlug[row.category_id] ?? row.category_id,
+        count: row.count,
+      }));
+    },
+  });
 }
 
 export async function runPreprocessPrompt(
@@ -94,21 +115,25 @@ export async function runPreprocessPrompt(
 ): Promise<{ result: LLMResult; provider: string; model: string }> {
   const modelName = process.env['LLM_MODEL'] ?? 'claude-sonnet-4-6';
 
-  const agent = createAgent({
-    model: new ChatAnthropic({ model: modelName }),
-    tools: [searchMerchantNames(), transactionSearch(idMaps), anthropicTools.webSearch_20250305({ maxUses: 3 })],
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    responseFormat: providerStrategy(LLMResultSchema as any),
-  });
-
-  const agentResult = await agent.invoke({
+  const { output } = await generateText({
+    model: anthropic(modelName),
+    tools: {
+      search_merchant_names: searchMerchantNames(),
+      search_transactions: transactionSearch(idMaps),
+      search_merchant_category_stats: searchMerchantCategoryStats(idMaps),
+      web_search: anthropic.tools.webSearch_20250305({ maxUses: 3 }),
+    },
+    stopWhen: isStepCount(10),
+    output: Output.object({ schema: LLMResultSchema }),
     messages: [
-      { role: 'system', content: systemPrompt },
+      {
+        role: 'system',
+        content: systemPrompt,
+        providerOptions: { anthropic: { cacheControl: { type: 'ephemeral' } } },
+      },
       { role: 'user', content: txJson },
     ],
   });
 
-  const result = agentResult.structuredResponse as LLMResult;
-
-  return { result, provider: 'langchain-anthropic', model: modelName };
+  return { result: output, provider: 'ai-sdk-anthropic', model: modelName };
 }
