@@ -14,6 +14,19 @@ const RECURRING_FIELDS = `
   }
 `;
 
+export const EDIT_RECURRING_MUTATION = `
+  ${RECURRING_FIELDS}
+  mutation EditRecurring($id: ID!, $input: EditRecurringInput!) {
+    editRecurring(id: $id, input: $input) {
+      recurring {
+        ...RecurringFields
+        rule { ...RecurringRuleFields }
+        payments { ...RecurringPaymentFields }
+      }
+    }
+  }
+`;
+
 const FREQUENCY_VALUES = [
   'WEEKLY', 'BIWEEKLY', 'MONTHLY', 'BIMONTHLY',
   'QUARTERLY', 'SEMIANNUALLY', 'ANNUALLY', 'IRREGULAR',
@@ -178,19 +191,7 @@ Optionally link a seed transaction to help the rule detect future payments.`,
       if (frequency !== undefined) input.frequency = frequency;
       if (categoryId !== undefined) input.categoryId = categoryId;
 
-      const query = `
-        ${RECURRING_FIELDS}
-        mutation EditRecurring($id: ID!, $input: EditRecurringInput!) {
-          editRecurring(id: $id, input: $input) {
-            recurring {
-              ...RecurringFields
-              rule { ...RecurringRuleFields }
-              payments { ...RecurringPaymentFields }
-            }
-          }
-        }
-      `;
-      const data = await gql<{ editRecurring: { recurring: unknown } }>(query, { id, input });
+      const data = await gql<{ editRecurring: { recurring: unknown } }>(EDIT_RECURRING_MUTATION, { id, input });
       return ok(data.editRecurring.recurring);
     }
   );
