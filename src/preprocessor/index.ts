@@ -1,3 +1,4 @@
+import '../shared/tracing.js';
 import 'dotenv/config';
 import { fileURLToPath } from 'url';
 import cron from 'node-cron';

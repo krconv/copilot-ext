@@ -5,17 +5,20 @@
   "type": "module",
   "main": "dist/server.js",
   "scripts": {
-    "server": "tsx src/server.ts",
-    "preprocess": "tsx src/preprocessor/index.ts",
+    "server": "NODE_OPTIONS='--import dd-trace/register.js' tsx src/server.ts",
+    "preprocess": "NODE_OPTIONS='--import dd-trace/register.js' tsx src/preprocessor/index.ts",
+    "batch": "NODE_OPTIONS='--import dd-trace/register.js' tsx src/preprocessor/batch.ts",
+    "sync": "tsx src/preprocessor/sync-once.ts",
     "db:migrate": "tsx src/shared/migrate.ts",
     "build": "tsc",
-    "start": "node dist/server.js"
+    "start": "node --import dd-trace/register.js dist/server.js"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.34",
     "@modelcontextprotocol/sdk": "^1.10.1",
     "ai": "^7.0.56",
     "cors": "^2.8.5",
+    "dd-trace": "^6.9.0",
     "dotenv": "^16.4.5",
     "express": "^4.21.0",
     "node-cron": "^3.0.3",

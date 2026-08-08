@@ -3,7 +3,7 @@ import { runPreprocessPrompt, type LLMResult } from './llm.js';
 import { getIdMaps, getAccountMap, replaceIdsWithNames, resolveResultIds } from './ids.js';
 import { buildPrompt } from './prompt.js';
 import { gql } from '../client.js';
-import { EDIT_TRANSACTION_MUTATION } from '../tools/transactions.js';
+import { EDIT_TRANSACTION_MUTATION, ADD_TRANSACTION_TO_RECURRING_MUTATION } from '../tools/transactions.js';
 
 export interface TransactionKey {
   itemId: string;
@@ -26,6 +26,7 @@ interface DbTransaction {
   tag_ids: string[] | null;
   user_notes: string | null;
   created_at: string | null;
+  original_name: string | null;
   raw_json: Record<string, unknown>;
 }
 
@@ -94,8 +95,23 @@ export async function processSingleTransaction(key: TransactionKey): Promise<boo
       };
 
       const tagSlugs = (raw.tags ?? []).map(t => idMaps.tagIdToSlug[t.id] ?? t.name);
+
+      // History-first name hint: the most common name this account has already used
+      // for reviewed transactions sharing this exact raw (original) name.
+      let establishedName: string | undefined;
+      if (transaction.original_name) {
+        const est = await pool.query<{ name: string }>(
+          `SELECT name FROM transactions
+           WHERE original_name = $1 AND is_reviewed = true AND name IS NOT NULL
+           GROUP BY name ORDER BY COUNT(*) DESC LIMIT 1`,
+          [transaction.original_name]
+        );
+        establishedName = est.rows[0]?.name;
+      }
+
       const curated: Record<string, unknown> = {
         name: raw.name,
+        establishedName,
         amount: raw.amount,
         date: raw.date,
         type: raw.type,
@@ -124,33 +140,64 @@ export async function processSingleTransaction(key: TransactionKey): Promise<boo
       const result = llmOut.result;
       const provider = llmOut.provider;
       const model = llmOut.model;
+      if (llmOut.unresolved) {
+        result.debug = `UNRESOLVED: ${llmOut.unresolvedReason ?? 'not confident'}`;
+      }
+      // Unresolved transactions are never marked applied — nothing is written to
+      // Copilot and they remain eligible for a later pass / manual review.
+      const appliedLive = !dryRun && !llmOut.unresolved;
       const resolved = resolveResultIds(result, idMaps);
       if (resolved.categoryId !== undefined) result.categoryId = resolved.categoryId;
       if (resolved.tagIds !== undefined) result.tagIds = resolved.tagIds;
+      if (resolved.recurringId !== undefined) result.recurringId = resolved.recurringId;
 
-    if (dryRun) {
+      // Programmatic normalization (kept out of the prompt):
+      //  - internal transfers / income never carry a category
+      //  - a transaction linked to a recurring doesn't need a note (the recurring captures it)
+      const finalType = result.type ?? transaction.type;
+      if (finalType === 'INTERNAL_TRANSFER' || finalType === 'INCOME') {
+        result.categoryId = undefined;
+      }
+      const willBeRecurring =
+        result.recurringId === null ? false
+        : result.recurringId !== undefined ? true
+        : transaction.recurring_id != null;
+      if (willBeRecurring) result.notes = undefined;
+
+      // Render the before → after diff for every transaction (dry-run and live).
       const origCategory = transaction.category_id
         ? (idMaps.categoryIdToSlug[transaction.category_id] ?? transaction.category_id)
         : null;
       const origTags = (transaction.tag_ids ?? []).map(id => idMaps.tagIdToSlug[id] ?? id);
 
-      const fields = ['name', 'type', 'categoryId', 'tagIds'] as const;
+      const fields = ['name', 'type', 'categoryId', 'tagIds', 'notes', 'recurring'] as const;
       const before: Record<string, unknown> = {
         name: transaction.name,
         type: transaction.type,
         categoryId: origCategory,
         tagIds: origTags.length > 0 ? origTags : undefined,
+        notes: transaction.user_notes ?? undefined,
+        recurring: transaction.recurring_id
+          ? (idMaps.recurringIdToName[transaction.recurring_id] ?? transaction.recurring_id)
+          : undefined,
       };
       const after: Record<string, unknown> = {
         name: result.name,
         type: result.type,
         categoryId: result.categoryId ? (idMaps.categoryIdToSlug[result.categoryId] ?? result.categoryId) : undefined,
         tagIds: result.tagIds?.map(id => idMaps.tagIdToSlug[id] ?? id),
+        notes: result.notes,
+        recurring: result.recurringId === null
+          ? null
+          : result.recurringId
+            ? (idMaps.recurringIdToName[result.recurringId] ?? result.recurringId)
+            : undefined,
       };
 
       const BOLD = '\x1b[1m'; const GREEN = '\x1b[32m'; const RESET = '\x1b[0m';
       const fmt = (val: unknown) => val == null || (Array.isArray(val) && val.length === 0) ? '(none)' : JSON.stringify(val);
-      const lines: string[] = [`[dry-run] ${transaction.id}  $${transaction.amount}`];
+      const tag = dryRun ? 'dry-run' : llmOut.unresolved ? 'unresolved' : 'applied';
+      const lines: string[] = [`[${tag}] ${transaction.id}  $${transaction.amount}`];
       for (const f of fields) {
         const b = before[f]; const a = after[f];
         const changed = a !== undefined && JSON.stringify(a) !== JSON.stringify(b);
@@ -164,22 +211,55 @@ export async function processSingleTransaction(key: TransactionKey): Promise<boo
       if (matchedRuleIds.length > 0) lines.push(`  rules:      ${matchedRuleIds.join(', ')}`);
       if (result.debug) lines.push(`  ${result.debug}`);
       console.log(lines.join('\n'));
-    } else {
-      const input: Record<string, unknown> = {};
-      if (result.name !== undefined) input['name'] = result.name;
-      if (result.categoryId !== undefined) input['categoryId'] = result.categoryId;
-      if (result.type !== undefined) input['type'] = result.type;
-      if (result.tagIds !== undefined) input['tagIds'] = result.tagIds;
 
-      if (Object.keys(input).length > 0) {
-        await gql(EDIT_TRANSACTION_MUTATION, {
-          itemId: transaction.item_id,
-          accountId: transaction.account_id,
-          id: transaction.id,
-          input,
-        });
+      if (appliedLive) {
+        const input: Record<string, unknown> = {};
+        if (result.name !== undefined) input['name'] = result.name;
+        if (result.categoryId !== undefined) input['categoryId'] = result.categoryId;
+        if (result.type !== undefined) input['type'] = result.type;
+        if (result.tagIds !== undefined) input['tagIds'] = result.tagIds;
+        if (result.notes !== undefined) input['userNotes'] = result.notes;
+
+        try {
+          if (Object.keys(input).length > 0) {
+            await gql(EDIT_TRANSACTION_MUTATION, {
+              itemId: transaction.item_id,
+              accountId: transaction.account_id,
+              id: transaction.id,
+              input,
+            });
+          }
+
+          // Recurring linking/clearing is a separate mutation — editTransaction does not accept recurringId.
+          // null clears the existing link (isExcluded on the recurring it's currently on); a slug links it.
+          if (result.recurringId === null) {
+            if (transaction.recurring_id) {
+              await gql(ADD_TRANSACTION_TO_RECURRING_MUTATION, {
+                itemId: transaction.item_id,
+                accountId: transaction.account_id,
+                id: transaction.id,
+                input: { recurringId: transaction.recurring_id, isExcluded: true },
+              });
+            }
+          } else if (result.recurringId !== undefined) {
+            await gql(ADD_TRANSACTION_TO_RECURRING_MUTATION, {
+              itemId: transaction.item_id,
+              accountId: transaction.account_id,
+              id: transaction.id,
+              input: { recurringId: result.recurringId, isExcluded: false },
+            });
+          }
+        } catch (err) {
+          // A pending charge (e.g. a gas-pump pre-auth) can vanish from Copilot
+          // before we apply — it's deleted and reposted under a new id. Rather than
+          // error out and recycle it forever, record an applied result so FRESH_SQL
+          // excludes it from future batches. Any other error still propagates.
+          const msg = err instanceof Error ? err.message : String(err);
+          if (!/not found/i.test(msg)) throw err;
+          result.debug = `ARCHIVED: ${msg} — no longer in Copilot (pending charge reposted under a new id)`;
+          console.log(`  \x1b[33m[archived]\x1b[0m ${transaction.id} — ${msg}`);
+        }
       }
-    }
 
     await pool.query(
       `INSERT INTO transaction_preprocess_results (
@@ -195,9 +275,9 @@ export async function processSingleTransaction(key: TransactionKey): Promise<boo
         transaction.name, transaction.category_id, transaction.type, transaction.user_notes, transaction.tag_ids,
         matchedRuleIds,
         result.name ?? null, result.categoryId ?? null, result.type ?? null,
-        null, result.tagIds ?? null, result.debug ?? null, result,
+        result.notes ?? null, result.tagIds ?? null, result.debug ?? null, result,
         provider, model,
-        dryRun, !dryRun, dryRun ? null : new Date(),
+        dryRun, appliedLive, appliedLive ? new Date() : null,
       ]
     );
 

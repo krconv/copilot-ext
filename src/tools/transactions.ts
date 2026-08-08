@@ -31,6 +31,16 @@ export const EDIT_TRANSACTION_MUTATION = `
   }
 `;
 
+// Linking a transaction to a recurring is a distinct mutation — editTransaction's
+// input does NOT accept recurringId.
+export const ADD_TRANSACTION_TO_RECURRING_MUTATION = `
+  mutation AddTransactionToRecurring($itemId: ID!, $accountId: ID!, $id: ID!, $input: AddTransactionToRecurringInput!) {
+    addTransactionToRecurring(itemId: $itemId, accountId: $accountId, id: $id, input: $input) {
+      transaction { id recurringId }
+    }
+  }
+`;
+
 const filterSchema = {
   startDate: z.string().optional().describe('Start date YYYY-MM-DD'),
   endDate: z.string().optional().describe('End date YYYY-MM-DD'),
@@ -133,7 +143,7 @@ All input fields are optional — only provide what you want to change:
 - categoryId: Set category
 - tagIds: Replace all tags (pass empty array to remove all)
 - userNotes: Free-form notes. The first line appears as a title suffix in the app (e.g. note "Bike" on "Wal-Mart" shows as "Wal-Mart: Bike")
-- recurringId: Link to a recurring rule
+- recurringId: Link to a recurring rule. Pass null to remove an existing recurring link.
 - isReviewed: Mark as reviewed
 - amount: Override amount
 - date: Override date (YYYY-MM-DD)`,
@@ -145,7 +155,7 @@ All input fields are optional — only provide what you want to change:
       amount: z.number().optional(),
       date: z.string().optional().describe('YYYY-MM-DD'),
       categoryId: z.string().optional(),
-      recurringId: z.string().optional(),
+      recurringId: z.string().nullable().optional(),
       isReviewed: z.boolean().optional(),
       userNotes: z.string().optional(),
       tagIds: z.array(z.string()).optional().describe('Replaces all existing tags'),
@@ -156,23 +166,45 @@ All input fields are optional — only provide what you want to change:
       if (amount !== undefined) input.amount = amount;
       if (date !== undefined) input.date = date;
       if (categoryId !== undefined) input.categoryId = categoryId;
-      if (recurringId !== undefined) input.recurringId = recurringId;
       if (isReviewed !== undefined) input.isReviewed = isReviewed;
       if (userNotes !== undefined) input.userNotes = userNotes;
       if (tagIds !== undefined) input.tagIds = tagIds;
+      // recurringId is NOT a valid editTransaction field — it's applied via a
+      // separate mutation below (linking; clearing pending the remove mutation).
 
-      const query = `
-        ${TRANSACTION_FIELDS}
-        mutation EditTransaction($itemId: ID!, $accountId: ID!, $id: ID!, $input: EditTransactionInput) {
-          editTransaction(itemId: $itemId, accountId: $accountId, id: $id, input: $input) {
-            transaction { ...TransactionFields }
-          }
+      let transaction: unknown;
+      if (Object.keys(input).length > 0) {
+        const data = await gql<{ editTransaction: { transaction: unknown } }>(EDIT_TRANSACTION_MUTATION, {
+          itemId, accountId, id, input,
+        });
+        transaction = data.editTransaction.transaction;
+      }
+
+      if (recurringId === null) {
+        // Clearing: exclude the transaction from the recurring it's currently on.
+        const current = await gql<{ transaction: { recurringId: string | null } | null }>(
+          `query Tx($itemId: ID!, $accountId: ID!, $id: ID!) {
+             transaction(itemId: $itemId, accountId: $accountId, id: $id) { recurringId }
+           }`,
+          { itemId, accountId, id }
+        );
+        const currentRecurringId = current.transaction?.recurringId;
+        if (currentRecurringId) {
+          const data = await gql<{ addTransactionToRecurring: { transaction: unknown } }>(
+            ADD_TRANSACTION_TO_RECURRING_MUTATION,
+            { itemId, accountId, id, input: { recurringId: currentRecurringId, isExcluded: true } }
+          );
+          transaction = data.addTransactionToRecurring.transaction;
         }
-      `;
-      const data = await gql<{ editTransaction: { transaction: unknown } }>(query, {
-        itemId, accountId, id, input,
-      });
-      return ok(data.editTransaction.transaction);
+      } else if (recurringId) {
+        const data = await gql<{ addTransactionToRecurring: { transaction: unknown } }>(
+          ADD_TRANSACTION_TO_RECURRING_MUTATION,
+          { itemId, accountId, id, input: { recurringId, isExcluded: false } }
+        );
+        transaction = data.addTransactionToRecurring.transaction;
+      }
+
+      return ok(transaction ?? { itemId, accountId, id, message: 'no changes applied' });
     }
   );
 

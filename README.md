@@ -74,7 +74,24 @@ FIREBASE_REFRESH_TOKEN=your_firebase_refresh_token
 LLM_MODEL=claude-sonnet-4-6
 PORT=3000
 DRY_RUN=true
+
+# Datadog LLM Observability (optional)
+DD_LLMOBS_ENABLED=1
+DD_LLMOBS_ML_APP=copilot-ext
+DD_API_KEY=your_datadog_api_key
+DD_SITE=datadoghq.com
+DD_LLMOBS_AGENTLESS_ENABLED=1
 ```
+
+### LLM Observability
+
+The Vercel AI SDK calls in the preprocessor are auto-instrumented with
+[Datadog LLM Observability](https://docs.datadoghq.com/llm_observability/).
+Tracing only activates when `DD_LLMOBS_ENABLED` is set; the tracer is initialized
+in-app (`src/shared/tracing.ts`). Because this is an ES Modules project, the run
+commands (`server`, `preprocess`, `batch`, `start`, and the Docker `CMD`) carry a
+`--import dd-trace/register.js` loader flag — required for ESM auto-instrumentation.
+Defaults to agentless mode (no local Agent); set `DD_SITE` to match your org's region.
 
 ### Running with Docker Compose
 

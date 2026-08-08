@@ -55,6 +55,9 @@ export interface IdMaps {
   tagDescriptions: Record<string, string>;      // slug → description (optional, user-supplied)
   categoryParentSlug: Record<string, string>;   // child slug → parent slug
   recurringIdToName: Record<string, string>;    // id → name (for recurring-linked transactions)
+  recurrings: Record<string, string>;           // slug → id
+  recurringNames: Record<string, string>;       // slug → human-readable name
+  recurringIdToSlug: Record<string, string>;    // id → slug
 }
 
 function toSlug(name: string): string {
@@ -115,8 +118,13 @@ export async function getIdMaps(): Promise<IdMaps> {
   }
 
   const recurringIdToName: Record<string, string> = {};
+  const recurrings: Record<string, string> = {};
+  const recurringNames: Record<string, string> = {};
   for (const r of recurringResult.rows) {
     recurringIdToName[r.id] = r.name;
+    const slug = toSlug(r.name);
+    recurrings[slug] = r.id;
+    recurringNames[slug] = r.name;
   }
 
   cache = {
@@ -130,6 +138,9 @@ export async function getIdMaps(): Promise<IdMaps> {
     tagDescriptions,
     categoryParentSlug,
     recurringIdToName,
+    recurrings,
+    recurringNames,
+    recurringIdToSlug: Object.fromEntries(Object.entries(recurrings).map(([k, v]) => [v, k])),
   };
 
   return cache;
@@ -149,13 +160,17 @@ export function replaceIdsWithNames(text: string, maps: IdMaps): string {
 
 /** Translate readable slugs in an LLM result back to real IDs. */
 export function resolveResultIds(
-  result: { categoryId?: string; tagIds?: string[] },
+  result: { categoryId?: string; tagIds?: string[]; recurringId?: string | null },
   maps: IdMaps
-): { categoryId?: string; tagIds?: string[] } {
+): { categoryId?: string; tagIds?: string[]; recurringId?: string | null } {
   return {
     categoryId: result.categoryId !== undefined
       ? (maps.categories[result.categoryId] ?? result.categoryId)
       : undefined,
     tagIds: result.tagIds?.map(t => maps.tags[t] ?? t),
+    // null (clear) and undefined (leave unchanged) pass through untouched.
+    recurringId: result.recurringId != null
+      ? (maps.recurrings[result.recurringId] ?? result.recurringId)
+      : result.recurringId,
   };
 }

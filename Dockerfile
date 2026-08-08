@@ -20,4 +20,4 @@ COPY --from=builder /app/dist ./dist
 
 EXPOSE 3000
 
-CMD ["node", "dist/server.js"]
+CMD ["node", "--import", "dd-trace/register.js", "dist/server.js"]

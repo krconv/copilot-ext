@@ -1,4 +1,4 @@
-import { generateText, tool, Output, isStepCount } from 'ai';
+import { generateText, tool, isStepCount } from 'ai';
 import { anthropic } from '@ai-sdk/anthropic';
 import { z } from 'zod';
 import { pool } from '../shared/db.js';
@@ -9,6 +9,8 @@ export const LLMResultSchema = z.object({
   type: z.enum(['REGULAR', 'INCOME', 'INTERNAL_TRANSFER']).optional().describe('Transaction type'),
   categoryId: z.string().optional().describe('Category slug to apply'),
   tagIds: z.array(z.string()).optional().describe('Tag slugs to apply'),
+  notes: z.string().optional().describe('Free-form note. Put the specific product/service/location here when the merchant name is the parent brand (e.g. note "Supercharger" when name is "Tesla"). Never restate the merchant name. Do not overwrite existing user notes.'),
+  recurringId: z.string().nullable().optional().describe('Slug of the recurring item this transaction clearly belongs to (same merchant/subscription). Omit to leave unchanged; pass null to remove an existing recurring link that is clearly wrong.'),
   debug: z.string().optional().describe('Concise explanation of decisions made — what was changed and why, or why fields were left unchanged'),
 });
 
@@ -108,23 +110,112 @@ function searchMerchantCategoryStats(idMaps: IdMaps) {
   });
 }
 
+function searchRecurrings(idMaps: IdMaps) {
+  return tool({
+    description:
+      'Look up recurring items (subscriptions, memberships, regular bills) by name. ' +
+      'Use when a charge looks like it could be a recurring subscription or bill and is not already ' +
+      'linked to a recurring. Returns { recurringId, name, frequency }[]; set the transaction\'s ' +
+      'recurringId to the matching recurringId (a slug). Only link on an obvious match.',
+    inputSchema: z.object({
+      query: z.string().describe('Merchant or subscription name to search for'),
+    }),
+    execute: async ({ query }) => {
+      const result = await pool.query<{ id: string; name: string; frequency: string }>(
+        `SELECT id, name, frequency
+         FROM recurrings
+         WHERE state != 'DELETED' AND name ILIKE $1
+         ORDER BY name
+         LIMIT 20`,
+        [`%${query}%`]
+      );
+      return result.rows.map(r => ({
+        recurringId: idMaps.recurringIdToSlug[r.id] ?? r.id,
+        name: r.name,
+        frequency: r.frequency,
+      }));
+    },
+  });
+}
+
+const SkipSchema = z.object({
+  reason: z.string().describe('Why you could not confidently determine the merchant and/or categorization'),
+});
+
+export interface PreprocessOutcome {
+  result: LLMResult;
+  unresolved: boolean;
+  unresolvedReason?: string;
+  provider: string;
+  model: string;
+}
+
+/** Validate that every id the model submitted is a real slug we can resolve. */
+function validateResultIds(input: LLMResult, idMaps: IdMaps): string[] {
+  const errs: string[] = [];
+  if (input.categoryId !== undefined && !(input.categoryId in idMaps.categories)) {
+    errs.push(`Unknown category "${input.categoryId}" — use one of the category slugs listed in the prompt (not a tag).`);
+  }
+  for (const t of input.tagIds ?? []) {
+    if (!(t in idMaps.tags)) errs.push(`Unknown tag "${t}" — use one of the tag slugs listed in the prompt.`);
+  }
+  if (input.recurringId != null && !(input.recurringId in idMaps.recurrings)) {
+    errs.push(`Unknown recurring "${input.recurringId}" — use a recurringId returned by search_recurrings.`);
+  }
+  return errs;
+}
+
 export async function runPreprocessPrompt(
   systemPrompt: string,
   txJson: string,
   idMaps: IdMaps
-): Promise<{ result: LLMResult; provider: string; model: string }> {
+): Promise<PreprocessOutcome> {
   const modelName = process.env['LLM_MODEL'] ?? 'claude-sonnet-4-6';
+  const provider = 'ai-sdk-anthropic';
 
-  const { output } = await generateText({
+  // The agent finishes by calling submit_result or skip. submit_result validates
+  // its ids: on a bad category/tag/recurring it returns an error the model sees
+  // and retries — the loop stops only on a *valid* submit (or skip), tracked via
+  // `done`. So an unresolved slug can never be written to Copilot, and there is
+  // no "model stopped without emitting an object" failure mode.
+  let captured: LLMResult | null = null;
+  let skippedReason: string | null = null;
+  let done = false;
+
+  await generateText({
     model: anthropic(modelName),
     tools: {
       search_merchant_names: searchMerchantNames(),
       search_transactions: transactionSearch(idMaps),
       search_merchant_category_stats: searchMerchantCategoryStats(idMaps),
+      search_recurrings: searchRecurrings(idMaps),
       web_search: anthropic.tools.webSearch_20250305({ maxUses: 3 }),
+      submit_result: tool({
+        description:
+          'Submit your final decision for this transaction. Include every field you want to set; ' +
+          'omit fields you are leaving unchanged. If this returns an error, fix the invalid value and call it again.',
+        inputSchema: LLMResultSchema,
+        execute: async (input) => {
+          const errs = validateResultIds(input, idMaps);
+          if (errs.length > 0) return { ok: false, error: errs.join(' ') };
+          captured = input;
+          done = true;
+          return { ok: true };
+        },
+      }),
+      skip: tool({
+        description:
+          'Leave this transaction unchanged. Call this instead of submit_result when you cannot ' +
+          'confidently determine the merchant name and/or categorization — do not force a guess.',
+        inputSchema: SkipSchema,
+        execute: async ({ reason }) => {
+          skippedReason = reason;
+          done = true;
+          return { ok: true };
+        },
+      }),
     },
-    stopWhen: isStepCount(10),
-    output: Output.object({ schema: LLMResultSchema }),
+    stopWhen: [isStepCount(15), () => done],
     // The catalog goes in `instructions` (a system message), not `messages` —
     // the AI SDK rejects role:'system' entries in `messages`. The ephemeral
     // cacheControl breakpoint stays on it so the catalog prefix is cached across
@@ -137,5 +228,14 @@ export async function runPreprocessPrompt(
     messages: [{ role: 'user', content: txJson }],
   });
 
-  return { result: output, provider: 'ai-sdk-anthropic', model: modelName };
+  if (captured) {
+    return { result: captured, unresolved: false, provider, model: modelName };
+  }
+  return {
+    result: {},
+    unresolved: true,
+    unresolvedReason: skippedReason ?? 'agent ended without submitting a valid result',
+    provider,
+    model: modelName,
+  };
 }
