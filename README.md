@@ -33,6 +33,10 @@ A background daemon that watches for new transactions and runs them through a Cl
 - Assigns the most appropriate category from your existing category hierarchy
 - Applies relevant tags
 - Identifies transaction type (regular expense, income, or internal transfer)
+- Links subscriptions and bills to the matching recurring item
+- Flags anything it can't confidently identify with the `Needs Attention` tag
+  (if you have one), so cryptic merchants surface as a reviewable list instead of
+  being retried by every future pass
 
 **How the agent decides:**
 

@@ -140,12 +140,23 @@ export async function processSingleTransaction(key: TransactionKey): Promise<boo
       const result = llmOut.result;
       const provider = llmOut.provider;
       const model = llmOut.model;
+      // When the agent can't identify a transaction, flag it with the
+      // needs_attention tag instead of leaving it untouched: it surfaces in
+      // Copilot as a reviewable list and stops recycling through every future
+      // batch (re-running the same web searches to reach the same conclusion).
+      // Without that tag configured there's nothing to flag with, so fall back
+      // to leaving the transaction for a later pass.
+      const needsAttentionId = idMaps.tags['needs_attention'];
       if (llmOut.unresolved) {
         result.debug = `UNRESOLVED: ${llmOut.unresolvedReason ?? 'not confident'}`;
+        if (needsAttentionId) {
+          const existing = transaction.tag_ids ?? [];
+          result.tagIds = existing.includes(needsAttentionId)
+            ? existing
+            : [...existing, needsAttentionId];
+        }
       }
-      // Unresolved transactions are never marked applied — nothing is written to
-      // Copilot and they remain eligible for a later pass / manual review.
-      const appliedLive = !dryRun && !llmOut.unresolved;
+      const appliedLive = !dryRun && (!llmOut.unresolved || needsAttentionId !== undefined);
       const resolved = resolveResultIds(result, idMaps);
       if (resolved.categoryId !== undefined) result.categoryId = resolved.categoryId;
       if (resolved.tagIds !== undefined) result.tagIds = resolved.tagIds;
@@ -196,7 +207,7 @@ export async function processSingleTransaction(key: TransactionKey): Promise<boo
 
       const BOLD = '\x1b[1m'; const GREEN = '\x1b[32m'; const RESET = '\x1b[0m';
       const fmt = (val: unknown) => val == null || (Array.isArray(val) && val.length === 0) ? '(none)' : JSON.stringify(val);
-      const tag = dryRun ? 'dry-run' : llmOut.unresolved ? 'unresolved' : 'applied';
+      const tag = dryRun ? 'dry-run' : llmOut.unresolved ? 'flagged' : 'applied';
       const lines: string[] = [`[${tag}] ${transaction.id}  $${transaction.amount}`];
       for (const f of fields) {
         const b = before[f]; const a = after[f];
@@ -255,7 +266,10 @@ export async function processSingleTransaction(key: TransactionKey): Promise<boo
           // error out and recycle it forever, record an applied result so FRESH_SQL
           // excludes it from future batches. Any other error still propagates.
           const msg = err instanceof Error ? err.message : String(err);
-          if (!/not found/i.test(msg)) throw err;
+          // Only a *missing transaction* is archivable. Other "... not found"
+          // errors (e.g. "Tag not found") are real failures and must propagate,
+          // or we'd mark a failed edit as applied and never retry it.
+          if (!/transaction not found/i.test(msg)) throw err;
           result.debug = `ARCHIVED: ${msg} — no longer in Copilot (pending charge reposted under a new id)`;
           console.log(`  \x1b[33m[archived]\x1b[0m ${transaction.id} — ${msg}`);
         }
